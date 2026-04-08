@@ -1,0 +1,376 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QMainWindow,
+    QVBoxLayout,
+    QWidget,
+)
+
+from core.models.document_session import DocumentSession
+from core.models.split_spec import SplitSpec
+from services.export_service import ExportService
+from services.pdf_service import PdfService
+
+from ui.inspector_panel import InspectorPanel
+from ui.thumbnail_panel import ThumbnailPanel
+from ui.toolbar import AppToolBar
+from ui.viewer_panel import ViewerPanel
+
+
+class MainWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self._pdf_service = PdfService()
+        self._export_service = ExportService(self._pdf_service)
+        self._session: DocumentSession | None = None
+        self._selected_page_indexes: list[int] = []
+        self._split_mode_active = False
+        self._split_start_indexes: set[int] = set()
+        self.setWindowTitle("PDF Viewer")
+        self.resize(1080, 700)
+        self.setMinimumSize(860, 560)
+        self.statusBar().showMessage("Shell scaffold ready")
+        self._build_ui()
+        self._build_toolbar()
+
+    def _build_toolbar(self) -> None:
+        self._toolbar = AppToolBar(self._handle_toolbar_action, self)
+        self.addToolBar(self._toolbar)
+
+    def _build_ui(self) -> None:
+        root = QWidget(self)
+        self.setCentralWidget(root)
+
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(4)
+
+        workspace = self._build_workspace_panel()
+        page_strip = self._build_page_strip_panel()
+
+        outer.addWidget(workspace, stretch=1)
+        outer.addWidget(page_strip)
+
+    def _build_workspace_panel(self) -> QWidget:
+        container = QWidget(self)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._viewer_panel = ViewerPanel(self)
+        self._inspector_panel = InspectorPanel(self)
+
+        layout.addWidget(self._viewer_panel, stretch=1)
+        layout.addWidget(self._inspector_panel)
+        return container
+
+    def _build_page_strip_panel(self) -> QWidget:
+        self._thumbnail_panel = ThumbnailPanel(self)
+        self._thumbnail_panel.page_selected.connect(self._select_page)
+        self._thumbnail_panel.page_clicked.connect(self._handle_page_clicked)
+        self._thumbnail_panel.selection_changed.connect(self._handle_selection_changed)
+        self._thumbnail_panel.page_reordered.connect(self._reorder_page)
+        return self._thumbnail_panel
+
+    def _handle_toolbar_action(self, action_id: str) -> None:
+        if self._split_mode_active and action_id not in {"save_splits", "cancel_split", "split"}:
+            self.statusBar().showMessage(
+                "Save or cancel split mode before using other actions.",
+                3000,
+            )
+            return
+
+        if action_id == "open":
+            self._open_pdf()
+            return
+        if action_id == "add":
+            self._add_pdf()
+            return
+        if action_id == "delete":
+            self._delete_selected_pages()
+            return
+        if action_id == "duplicate":
+            self._duplicate_selected_pages()
+            return
+        if action_id == "split":
+            self._enter_split_mode()
+            return
+        if action_id == "save_splits":
+            self._save_split_documents()
+            return
+        if action_id == "cancel_split":
+            self._exit_split_mode(clear_markers=True)
+            return
+
+        messages = {
+            "save_as": "Save As will be wired in Phase 6.",
+            "join": "Join now happens by adding PDFs into the current filmstrip.",
+            "rotate": "Rotate will be added after page operations are wired.",
+            "undo": "Undo history will be added in Phase 5.",
+            "redo": "Redo history will be added in Phase 5.",
+        }
+        self.statusBar().showMessage(messages.get(action_id, "Action not implemented yet."), 4000)
+
+    def _open_pdf(self) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Open PDF",
+            "",
+            "PDF Files (*.pdf)",
+        )
+        if not file_path:
+            return
+
+        session = self._pdf_service.load_document(file_path)
+        self._load_session(session)
+        self.statusBar().showMessage(
+            f"Loaded {session.page_count} pages from {session.source_path.name}",
+            5000,
+        )
+
+    def _add_pdf(self) -> None:
+        file_path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Add PDF",
+            "",
+            "PDF Files (*.pdf)",
+        )
+        if not file_path:
+            return
+
+        if self._session is None:
+            self._load_session(self._pdf_service.load_document(file_path))
+            self.statusBar().showMessage(
+                (
+                    f"Loaded {self._session.page_count if self._session else 0} pages "
+                    f"from {Path(file_path).name}"
+                ),
+                5000,
+            )
+            return
+
+        page_count = self._pdf_service.get_page_count(file_path)
+        self._session.append_document(file_path, page_count)
+        self._refresh_thumbnails(preserve_selection=True)
+        self.statusBar().showMessage(
+            f"Added {page_count} pages from {Path(file_path).name}",
+            5000,
+        )
+
+    def _load_session(self, session: DocumentSession) -> None:
+        self._exit_split_mode(clear_markers=True)
+        self._session = session
+        self._refresh_thumbnails(preserve_selection=False)
+        self._select_page(0)
+
+    def _refresh_thumbnails(self, preserve_selection: bool) -> None:
+        if self._session is None:
+            self._thumbnail_panel.clear_pages()
+            return
+
+        document_breaks = {
+            index
+            for index, page in enumerate(self._session.pages)
+            if index > 0 and page.source_path != self._session.pages[index - 1].source_path
+        }
+        thumbnails = [
+            self._pdf_service.render_thumbnail(page.source_path, page.source_page_index)
+            for page in self._session.pages
+        ]
+        self._thumbnail_panel.set_pages(thumbnails, document_breaks)
+        self._apply_split_markers()
+        if preserve_selection and self._session.pages:
+            self._thumbnail_panel.set_current_page(self._session.selected_page_index)
+            self._thumbnail_panel.set_selected_pages(self._selected_page_indexes)
+
+    def _reorder_page(self, source_index: int, destination_index: int) -> None:
+        if self._session is None:
+            return
+
+        selected_index = self._session.move_page(source_index, destination_index)
+        self._selected_page_indexes = [selected_index]
+        self._refresh_thumbnails(preserve_selection=True)
+        self._thumbnail_panel.set_current_page(selected_index)
+        self._select_page(selected_index)
+        self.statusBar().showMessage(
+            f"Moved page {source_index + 1} to position {destination_index + 1}",
+            3000,
+        )
+
+    def _delete_selected_pages(self) -> None:
+        if self._session is None or not self._selected_page_indexes:
+            self.statusBar().showMessage("Select at least one page to delete.", 3000)
+            return
+
+        selected_index = self._session.delete_pages(self._selected_page_indexes)
+        deleted_count = len(self._selected_page_indexes)
+        self._selected_page_indexes = [] if selected_index is None else [selected_index]
+        self._refresh_thumbnails(preserve_selection=True)
+
+        if selected_index is None:
+            self._viewer_panel.show_placeholder("Open a PDF to view its pages.")
+            self._inspector_panel.set_blank_state()
+        else:
+            self._thumbnail_panel.set_current_page(selected_index)
+            self._select_page(selected_index)
+
+        self.statusBar().showMessage(f"Deleted {deleted_count} page(s)", 3000)
+
+    def _duplicate_selected_pages(self) -> None:
+        if self._session is None or not self._selected_page_indexes:
+            self.statusBar().showMessage("Select at least one page to duplicate.", 3000)
+            return
+
+        inserted_indexes = self._session.duplicate_pages(self._selected_page_indexes)
+        if not inserted_indexes:
+            return
+
+        self._selected_page_indexes = inserted_indexes
+        self._refresh_thumbnails(preserve_selection=True)
+        self._thumbnail_panel.set_current_page(inserted_indexes[0])
+        self._select_page(inserted_indexes[0])
+        self.statusBar().showMessage(f"Duplicated {len(inserted_indexes)} page(s)", 3000)
+
+    def _split_pdf(self) -> None:
+        self._enter_split_mode()
+
+    def _enter_split_mode(self) -> None:
+        if self._session is None or not self._session.pages:
+            self.statusBar().showMessage("Open a PDF before splitting pages.", 3000)
+            return
+
+        if self._split_mode_active:
+            self.statusBar().showMessage(
+                "Split mode is already active. Click pages to add or remove breaks.",
+                3000,
+            )
+            return
+
+        self._split_mode_active = True
+        self._split_start_indexes.clear()
+        self._toolbar.set_split_mode(True)
+        self._apply_split_markers()
+        self._update_inspector()
+        self.statusBar().showMessage(
+            "Split mode active. Click filmstrip pages to mark new document starts.",
+            5000,
+        )
+
+    def _save_split_documents(self) -> None:
+        if self._session is None or not self._session.pages:
+            return
+
+        spec = SplitSpec(tuple(sorted(self._split_start_indexes)))
+        groups = spec.build_groups(self._session.page_count)
+        if not groups:
+            self.statusBar().showMessage("No split groups are available to export.", 3000)
+            return
+
+        output_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save split PDFs",
+            str(self._session.source_path),
+            "PDF Files (*.pdf)",
+        )
+        if not output_path:
+            return
+
+        exported_paths = self._export_service.export_groups(
+            self._session,
+            groups,
+            base_output_path=output_path,
+        )
+        self._exit_split_mode(clear_markers=True)
+        self.statusBar().showMessage(
+            f"Created {len(exported_paths)} split PDF(s) starting at {exported_paths[0].name}",
+            5000,
+        )
+
+    def _exit_split_mode(self, clear_markers: bool) -> None:
+        self._split_mode_active = False
+        if clear_markers:
+            self._split_start_indexes.clear()
+        if hasattr(self, "_toolbar"):
+            self._toolbar.set_split_mode(False)
+        self._apply_split_markers()
+        self._update_inspector()
+
+    def _handle_page_clicked(self, page_index: int) -> None:
+        if not self._split_mode_active:
+            return
+        if page_index == 0:
+            self.statusBar().showMessage(
+                "Page 1 already starts the first split document.",
+                3000,
+            )
+            return
+
+        if page_index in self._split_start_indexes:
+            self._split_start_indexes.remove(page_index)
+            self.statusBar().showMessage(
+                f"Removed split start on page {page_index + 1}",
+                3000,
+            )
+        else:
+            self._split_start_indexes.add(page_index)
+            self.statusBar().showMessage(
+                f"Added split start on page {page_index + 1}",
+                3000,
+            )
+        self._apply_split_markers()
+        self._update_inspector()
+
+    def _apply_split_markers(self) -> None:
+        if not hasattr(self, "_thumbnail_panel"):
+            return
+        split_starts = {0, *self._split_start_indexes} if self._split_mode_active else set()
+        self._thumbnail_panel.set_split_starts(split_starts)
+
+    def _select_page(self, page_index: int) -> None:
+        if self._session is None or not self._session.pages:
+            return
+
+        self._session.select_page(page_index)
+        page = self._session.selected_page
+        if page is None:
+            return
+
+        pixmap = self._pdf_service.render_page(page.source_path, page.source_page_index)
+        self._viewer_panel.show_page(pixmap, page_index, self._session.page_count)
+        self._thumbnail_panel.set_current_page(page_index)
+        self._update_inspector()
+
+    def _handle_selection_changed(self, indexes: list[int]) -> None:
+        self._selected_page_indexes = indexes
+        if not indexes:
+            self._update_inspector()
+            return
+
+        if self._session is not None:
+            self._update_inspector()
+
+    def _update_inspector(self) -> None:
+        if self._session is None or not self._session.pages:
+            self._inspector_panel.set_blank_state()
+            return
+
+        split_preview_lines: list[str] = []
+        if self._split_mode_active:
+            split_preview_lines = SplitSpec(
+                tuple(sorted(self._split_start_indexes))
+            ).describe_groups(self._session.page_count)
+
+        self._inspector_panel.set_document_state(
+            str(self._session.source_path),
+            self._session.page_count,
+            self._session.selected_page_index,
+            self._session.source_count,
+            max(1, len(self._selected_page_indexes)),
+            split_mode_active=self._split_mode_active,
+            split_start_indexes=sorted(self._split_start_indexes),
+            split_preview_lines=split_preview_lines,
+        )
