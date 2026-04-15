@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -53,7 +52,6 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_toolbar()
         self._refresh_recent_files_menu()
-        QTimer.singleShot(0, self._attempt_restore_last_session)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -85,11 +83,6 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         restore_last_action = file_menu.addAction("Restore Last Session")
         restore_last_action.triggered.connect(self._attempt_restore_last_session)
-
-        restore_toggle = file_menu.addAction("Restore Last Session On Startup")
-        restore_toggle.setCheckable(True)
-        restore_toggle.setChecked(self._settings_service.should_restore_last_session())
-        restore_toggle.toggled.connect(self._settings_service.set_restore_last_session)
 
     def _build_toolbar(self) -> None:
         self._toolbar = AppToolBar(self._handle_toolbar_action, self)
@@ -165,6 +158,12 @@ class MainWindow(QMainWindow):
         if action_id == "cancel_split":
             self._exit_split_mode(clear_markers=True)
             return
+        if action_id == "join":
+            self._join_pdfs()
+            return
+        if action_id == "rotate":
+            self._rotate_selected_pages()
+            return
         if action_id == "undo":
             self._undo()
             return
@@ -172,11 +171,7 @@ class MainWindow(QMainWindow):
             self._redo()
             return
 
-        messages = {
-            "join": "Join now happens by adding PDFs into the current filmstrip.",
-            "rotate": "Rotate will be added after page operations are wired.",
-        }
-        self.statusBar().showMessage(messages.get(action_id, "Action not implemented yet."), 4000)
+        self.statusBar().showMessage("Action not implemented yet.", 4000)
 
     def _open_pdf(self) -> None:
         if not self._confirm_discard_unsaved_changes():
@@ -234,6 +229,76 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Added {page_count} pages from {Path(file_path).name}",
             5000,
+        )
+
+    def _join_pdfs(self) -> None:
+        file_paths, _selected_filter = QFileDialog.getOpenFileNames(
+            self,
+            "Join PDFs",
+            "",
+            "PDF Files (*.pdf)",
+        )
+        if not file_paths:
+            return
+
+        if self._session is None:
+            primary_path = file_paths[0]
+            session = self._pdf_service.load_document(primary_path)
+            self._load_session(session)
+            self._remember_opened_file(primary_path)
+            join_paths = file_paths[1:]
+        else:
+            join_paths = file_paths
+
+        if self._session is None:
+            return
+
+        before = self._session.clone()
+        total_added_pages = 0
+        first_added_index = self._session.page_count
+
+        for file_path in join_paths:
+            page_count = self._pdf_service.get_page_count(file_path)
+            if page_count <= 0:
+                continue
+            self._session.append_document(file_path, page_count)
+            self._remember_opened_file(file_path)
+            total_added_pages += page_count
+
+        if total_added_pages == 0:
+            self.statusBar().showMessage("No additional pages were added during join.", 3000)
+            return
+
+        self._record_history_change(before, "Join PDFs")
+        self._selected_page_indexes = [first_added_index]
+        self._refresh_thumbnails(preserve_selection=True)
+        self._thumbnail_panel.set_current_page(first_added_index)
+        self._select_page(first_added_index)
+        self.statusBar().showMessage(
+            f"Joined {len(join_paths)} file(s), adding {total_added_pages} page(s).",
+            5000,
+        )
+
+    def _rotate_selected_pages(self) -> None:
+        if self._session is None or not self._session.pages:
+            self.statusBar().showMessage("Open a PDF before rotating pages.", 3000)
+            return
+
+        target_indexes = self._selected_page_indexes or [self._session.selected_page_index]
+        before = self._session.clone()
+        rotated_indexes = self._session.rotate_pages(target_indexes, degrees=90)
+        if not rotated_indexes:
+            self.statusBar().showMessage("Select at least one page to rotate.", 3000)
+            return
+
+        self._record_history_change(before, "Rotate pages")
+        self._selected_page_indexes = rotated_indexes
+        self._refresh_thumbnails(preserve_selection=True)
+        self._thumbnail_panel.set_current_page(rotated_indexes[0])
+        self._select_page(rotated_indexes[0])
+        self.statusBar().showMessage(
+            f"Rotated {len(rotated_indexes)} page(s) clockwise.",
+            3000,
         )
 
     def _remember_opened_file(self, file_path: str | Path) -> None:
@@ -405,6 +470,8 @@ class MainWindow(QMainWindow):
 
         self._split_mode_active = True
         self._split_spec = SplitSpec(mode="selected")
+        self._selected_page_indexes = []
+        self._thumbnail_panel.set_selected_pages([])
         self._toolbar.set_split_mode(True)
         self._inspector_panel.set_split_controls(
             self._split_spec.mode,
@@ -549,7 +616,29 @@ class MainWindow(QMainWindow):
         self._update_inspector()
 
     def _handle_page_clicked(self, page_index: int) -> None:
-        return
+        if self._session is None or not self._session.pages:
+            return
+
+        if self._split_mode_active:
+            toggled_indexes = set(self._selected_page_indexes)
+            if page_index in toggled_indexes:
+                toggled_indexes.remove(page_index)
+            else:
+                toggled_indexes.add(page_index)
+
+            self._selected_page_indexes = sorted(toggled_indexes)
+            self._thumbnail_panel.set_selected_pages(self._selected_page_indexes)
+            self._thumbnail_panel.set_current_page(page_index)
+            self._select_page(page_index)
+            self._apply_split_markers()
+            self._update_inspector()
+            self.statusBar().showMessage(
+                f"Split selection: {len(self._selected_page_indexes)} page(s)",
+                2000,
+            )
+            return
+
+        self._select_page(page_index)
 
     def _apply_split_markers(self) -> None:
         if not hasattr(self, "_thumbnail_panel"):
@@ -576,7 +665,11 @@ class MainWindow(QMainWindow):
         if page is None:
             return
 
-        pixmap = self._pdf_service.render_page(page.source_path, page.source_page_index)
+        pixmap = self._pdf_service.render_page(
+            page.source_path,
+            page.source_page_index,
+            max_width=self._viewer_panel.render_target_width(),
+        )
         self._viewer_panel.show_page(pixmap, page_index, self._session.page_count)
         self._thumbnail_panel.set_current_page(page_index)
         self._update_inspector()

@@ -115,6 +115,17 @@ def _build_stylesheet() -> str:
         background: #313c49;
     }
 
+    QToolButton:checked {
+        background: #0b5f4e;
+        color: #f2fff9;
+        border: 2px solid #4de4b9;
+    }
+
+    QToolButton:checked:hover {
+        background: #117a63;
+        border-color: #7ff0ce;
+    }
+
     QFrame#SidebarPlaceholder {
         background: qlineargradient(
             x1: 0,
@@ -178,8 +189,9 @@ def _build_stylesheet() -> str:
     }
 
     QListWidget#ThumbnailList::item:selected {
-        background: #24374f;
-        border: 1px solid #63a4ff;
+        background: #0f253d;
+        border: 2px solid #8bc5ff;
+        color: #f4f9ff;
     }
 
     QScrollArea {

@@ -50,6 +50,10 @@ class ViewerPanel(QFrame):
         self._page_label.setPixmap(QPixmap())
         self._page_label.setText(message)
 
+    def render_target_width(self) -> int:
+        viewport_width = self._scroll_area.viewport().width()
+        return max(1200, int(viewport_width * 2.0))
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_displayed_page()

@@ -97,15 +97,20 @@ class FilmstripListWidget(QListWidget):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
-        separator_pen = QPen(QColor("#2a3642"))
-        separator_pen.setWidth(3)
-        painter.setPen(separator_pen)
-
         for break_row in sorted(self._document_breaks):
             if 0 < break_row < self.count():
                 x_pos = self._separator_x(break_row)
                 height = self.viewport().height()
-                painter.drawLine(x_pos, 10, x_pos, max(10, height - 10))
+                divider_left = x_pos - 7
+                divider_height = max(0, height - 8)
+                painter.fillRect(divider_left, 4, 14, divider_height, QColor("#f4f7fb"))
+                painter.fillRect(
+                    divider_left + 1,
+                    5,
+                    12,
+                    max(0, divider_height - 2),
+                    QColor("#12273f"),
+                )
 
         marker_color = QColor("#51c7c2")
         badge_pen = QPen(QColor("#0d1f2b"))
@@ -114,11 +119,19 @@ class FilmstripListWidget(QListWidget):
             if 0 <= split_row < self.count():
                 rect = self.visualItemRect(self.item(split_row)).adjusted(4, 3, -4, -4)
                 painter.fillRect(rect.left(), rect.top(), rect.width(), 5, marker_color)
-            badge_rect = rect.adjusted(rect.width() - 20, 8, -2, -rect.height() + 26)
-            painter.setPen(badge_pen)
-            painter.setBrush(marker_color)
-            painter.drawEllipse(badge_rect)
-            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, str(badge_index))
+                badge_rect = rect.adjusted(rect.width() - 20, 8, -2, -rect.height() + 26)
+                painter.setPen(badge_pen)
+                painter.setBrush(marker_color)
+                painter.drawEllipse(badge_rect)
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, str(badge_index))
+
+        current_row = self.currentRow()
+        if 0 <= current_row < self.count():
+            current_pen = QPen(QColor("#ffd166"))
+            current_pen.setWidth(3)
+            painter.setPen(current_pen)
+            current_rect = self.visualItemRect(self.item(current_row)).adjusted(0, 0, -1, -1)
+            painter.drawRect(current_rect)
 
         if self._highlight_row is not None and 0 <= self._highlight_row < self.count():
             highlight_pen = QPen(QColor("#78b7ff"))

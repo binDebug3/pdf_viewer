@@ -41,6 +41,8 @@ class AppToolBar(QToolBar):
             action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
             action.setStatusTip(label)
             action.setToolTip(f"{label} ({action.shortcut().toString()})")
+            if action_id == "split":
+                action.setCheckable(True)
             action.triggered.connect(lambda _checked=False, value=action_id: on_action(value))
             self._actions[action_id] = action
             self.addAction(action)
@@ -51,7 +53,8 @@ class AppToolBar(QToolBar):
 
     def set_split_mode(self, active: bool) -> None:
         self._actions["split"].setText("Split Active" if active else "Split")
-        self._actions["split"].setEnabled(not active)
+        self._actions["split"].setChecked(active)
+        self._actions["split"].setEnabled(True)
         self._actions["save_splits"].setVisible(active)
         self._actions["save_splits"].setEnabled(active)
         self._actions["cancel_split"].setVisible(active)
