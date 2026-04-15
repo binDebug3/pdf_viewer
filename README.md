@@ -38,9 +38,15 @@ python -m app.main
 
 ## Test
 
-Run the smoke test suite with:
+Run all automated tests (unit, integration, and UI) with:
 
 ```powershell
 pytest
+```
+
+Generate a coverage report with:
+
+```powershell
+pytest --cov=core --cov=services --cov-report=term-missing
 ```
 
