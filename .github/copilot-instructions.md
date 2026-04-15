@@ -59,7 +59,7 @@
 - NEVER skip tests - broken tests should be fixed immediately or removed.
 - Use `pytest` for testing and ensure all tests pass before merging code.
 - Write tests for all new features and bug fixes.
-- Run tests using conda environment named 'printify'
+- Run tests using conda environment named 'pdf-viewer'
 - Always mock read from *.txt and *.json files in tests, never read from them directly because they are not available in the test environment.
 
 ## Your Permission
