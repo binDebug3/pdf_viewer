@@ -41,13 +41,54 @@ def _build_stylesheet() -> str:
     return """
     QMainWindow {
         background: #121417;
+        font-family: "Segoe UI Variable", "Segoe UI", "Trebuchet MS";
+        font-size: 10.5pt;
+    }
+
+    QMenuBar {
+        background: #171b20;
+        color: #dfe6ef;
+        border-bottom: 1px solid #242b34;
+        padding: 2px 6px;
+    }
+
+    QMenuBar::item {
+        background: transparent;
+        border-radius: 6px;
+        padding: 6px 10px;
+    }
+
+    QMenuBar::item:selected {
+        background: #263343;
+    }
+
+    QMenu {
+        background: #181d24;
+        color: #e6ebf2;
+        border: 1px solid #2b3441;
+        padding: 6px;
+    }
+
+    QMenu::item {
+        border-radius: 6px;
+        padding: 7px 12px;
+    }
+
+    QMenu::item:selected {
+        background: #2a3849;
+    }
+
+    QMenu::separator {
+        height: 1px;
+        background: #2f3742;
+        margin: 6px 8px;
     }
 
     QToolBar {
         background: #171b20;
         border: none;
-        spacing: 6px;
-        padding: 6px 10px;
+        spacing: 8px;
+        padding: 8px 12px;
     }
 
     QToolBar::separator {
@@ -60,8 +101,9 @@ def _build_stylesheet() -> str:
         background: #232931;
         color: #e8eaed;
         border: 1px solid #303844;
-        border-radius: 8px;
-        padding: 7px 10px;
+        border-radius: 9px;
+        padding: 8px 11px;
+        min-width: 78px;
     }
 
     QToolButton:hover {
@@ -74,7 +116,14 @@ def _build_stylesheet() -> str:
     }
 
     QFrame#SidebarPlaceholder {
-        background: #171b20;
+        background: qlineargradient(
+            x1: 0,
+            y1: 0,
+            x2: 0,
+            y2: 1,
+            stop: 0 #1a2028,
+            stop: 1 #171b20
+        );
         border: 1px solid #272e37;
         border-radius: 12px;
     }
@@ -83,6 +132,11 @@ def _build_stylesheet() -> str:
     QFrame#FilmstripPanel {
         background: transparent;
         border: none;
+    }
+
+    QFrame#FilmstripPanel {
+        border-top: 1px solid #232a33;
+        padding-top: 2px;
     }
 
     QLabel#SectionTitle {
@@ -118,14 +172,46 @@ def _build_stylesheet() -> str:
         margin: 1px;
     }
 
+    QListWidget#ThumbnailList::item:hover {
+        background: #222b37;
+        border: 1px solid #354154;
+    }
+
     QListWidget#ThumbnailList::item:selected {
-        background: #243247;
-        border: 1px solid #4b7bec;
+        background: #24374f;
+        border: 1px solid #63a4ff;
     }
 
     QScrollArea {
         border: none;
         background: transparent;
+    }
+
+    QComboBox,
+    QLineEdit,
+    QPushButton,
+    QCheckBox {
+        color: #e8eaed;
+    }
+
+    QComboBox,
+    QLineEdit {
+        background: #202833;
+        border: 1px solid #303844;
+        border-radius: 8px;
+        padding: 6px 8px;
+    }
+
+    QPushButton {
+        background: #242d39;
+        border: 1px solid #33404f;
+        border-radius: 8px;
+        padding: 6px 10px;
+    }
+
+    QPushButton:hover {
+        background: #2b3847;
+        border-color: #46576a;
     }
 
     QStatusBar {

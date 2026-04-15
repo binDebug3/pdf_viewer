@@ -35,7 +35,10 @@ class InspectorPanel(QFrame):
         self._summary.setObjectName("MutedText")
         self._summary.setWordWrap(True)
 
-        self._details = QLabel("Open a PDF to inspect page count and current selection.", self)
+        self._details = QLabel(
+            "Open or add a PDF to inspect page count, selection, and split readiness.",
+            self,
+        )
         self._details.setObjectName("MutedText")
         self._details.setWordWrap(True)
 
@@ -85,8 +88,12 @@ class InspectorPanel(QFrame):
 
     def set_blank_state(self) -> None:
         self._summary.setText("Current state: blank workspace")
-        self._details.setText("Open a PDF to inspect page count and current selection.")
-        self._split_preview.setText("Preview will appear when split mode is active.")
+        self._details.setText(
+            "Open a PDF from the toolbar or File menu, then select pages to edit or split."
+        )
+        self._split_preview.setText(
+            "Enter split mode to preview output groups before saving split files."
+        )
         self._set_split_controls_enabled(False)
 
     def set_split_controls(
@@ -151,7 +158,7 @@ class InspectorPanel(QFrame):
             f"Pages: {page_count}\n"
             f"Selected page: {selected_page_index + 1}\n"
             f"Selected count: {selected_count}\n"
-            "Split, export, and page actions will appear here."
+            "Tip: Use Ctrl+O to open, Ctrl+Shift+O to add, and drag pages to reorder."
         )
 
     def _emit_split_options(self) -> None:

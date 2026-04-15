@@ -1,6 +1,14 @@
 # pdf_viewer
 An app to view and edit a pdf
 
+## Current UX Features
+
+- Polished desktop layout with stronger hover and selection feedback in the toolbar, filmstrip, and inspector.
+- Keyboard shortcuts for common actions like open, add, save-as, split mode, undo, and redo.
+- Recent files list in the File menu for quick re-open.
+- Last-session restore support on startup (toggleable from the File menu).
+- Improved blank-state guidance to make first-run actions clear.
+
 ## Planning
 
 See `docs/implementation-plan.md` for the phased implementation plan, architecture, MVP scope, and delivery milestones.

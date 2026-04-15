@@ -97,9 +97,8 @@ class FilmstripListWidget(QListWidget):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
-        separator_pen = QPen(Qt.GlobalColor.gray)
-        separator_pen.setWidth(4)
-        separator_pen.setColor(Qt.GlobalColor.gray)
+        separator_pen = QPen(QColor("#2a3642"))
+        separator_pen.setWidth(3)
         painter.setPen(separator_pen)
 
         for break_row in sorted(self._document_breaks):
@@ -108,8 +107,8 @@ class FilmstripListWidget(QListWidget):
                 height = self.viewport().height()
                 painter.drawLine(x_pos, 10, x_pos, max(10, height - 10))
 
-        marker_color = QColor("#4dd0e1")
-        badge_pen = QPen(QColor("#0d1b21"))
+        marker_color = QColor("#51c7c2")
+        badge_pen = QPen(QColor("#0d1f2b"))
         badge_pen.setWidth(1)
         for badge_index, split_row in enumerate(sorted(self._split_starts), start=1):
             if 0 <= split_row < self.count():
@@ -122,16 +121,15 @@ class FilmstripListWidget(QListWidget):
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, str(badge_index))
 
         if self._highlight_row is not None and 0 <= self._highlight_row < self.count():
-            highlight_pen = QPen(Qt.GlobalColor.yellow)
+            highlight_pen = QPen(QColor("#78b7ff"))
             highlight_pen.setWidth(3)
             painter.setPen(highlight_pen)
             rect = self.visualItemRect(self.item(self._highlight_row)).adjusted(1, 1, -1, -1)
             painter.drawRect(rect)
 
         if self._drop_row is not None:
-            indicator_pen = QPen(Qt.GlobalColor.yellow)
+            indicator_pen = QPen(QColor("#78b7ff"))
             indicator_pen.setWidth(5)
-            indicator_pen.setColor(Qt.GlobalColor.yellow)
             painter.setPen(indicator_pen)
 
             x_pos = self._indicator_x(self._drop_row)

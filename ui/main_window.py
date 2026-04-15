@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -16,6 +18,7 @@ from core.models.split_spec import SplitSpec
 from core.state.history import HistoryStep, SessionHistory
 from services.export_service import ExportService
 from services.pdf_service import PdfService
+from services.settings_service import SettingsService
 
 from ui.inspector_panel import InspectorPanel
 from ui.thumbnail_panel import ThumbnailPanel
@@ -24,21 +27,64 @@ from ui.viewer_panel import ViewerPanel
 
 
 class MainWindow(QMainWindow):
+    STARTUP_HINT = "Open a PDF or drop one in the filmstrip to start editing."
+
     def __init__(self) -> None:
         super().__init__()
         self._pdf_service = PdfService()
         self._export_service = ExportService(self._pdf_service)
+        self._settings_service = SettingsService()
         self._session: DocumentSession | None = None
         self._selected_page_indexes: list[int] = []
         self._history = SessionHistory()
         self._split_mode_active = False
         self._split_spec = SplitSpec(mode="current")
+        self._recent_file_actions: list[QAction] = []
         self.setWindowTitle("PDF Viewer")
-        self.resize(1080, 700)
+        self.resize(1180, 760)
         self.setMinimumSize(860, 560)
-        self.statusBar().showMessage("Shell scaffold ready")
+        self.statusBar().showMessage(self.STARTUP_HINT)
         self._build_ui()
+        self._build_menu()
         self._build_toolbar()
+        self._refresh_recent_files_menu()
+        QTimer.singleShot(0, self._attempt_restore_last_session)
+
+    def _build_menu(self) -> None:
+        file_menu = self.menuBar().addMenu("&File")
+
+        open_action = file_menu.addAction("Open PDF...")
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(lambda: self._handle_toolbar_action("open"))
+
+        add_action = file_menu.addAction("Add PDF...")
+        add_action.setShortcut("Ctrl+Shift+O")
+        add_action.triggered.connect(lambda: self._handle_toolbar_action("add"))
+
+        save_as_action = file_menu.addAction("Save As...")
+        save_as_action.setShortcut("Ctrl+Shift+S")
+        save_as_action.triggered.connect(lambda: self._handle_toolbar_action("save_as"))
+
+        file_menu.addSeparator()
+        recent_header = file_menu.addAction("Recent Files")
+        recent_header.setEnabled(False)
+
+        for _index in range(SettingsService.MAX_RECENT_FILES):
+            action = file_menu.addAction("")
+            action.setVisible(False)
+            action.triggered.connect(
+                lambda _checked=False, value=action: self._open_recent_file(str(value.data()))
+            )
+            self._recent_file_actions.append(action)
+
+        file_menu.addSeparator()
+        restore_last_action = file_menu.addAction("Restore Last Session")
+        restore_last_action.triggered.connect(self._attempt_restore_last_session)
+
+        restore_toggle = file_menu.addAction("Restore Last Session On Startup")
+        restore_toggle.setCheckable(True)
+        restore_toggle.setChecked(self._settings_service.should_restore_last_session())
+        restore_toggle.toggled.connect(self._settings_service.set_restore_last_session)
 
     def _build_toolbar(self) -> None:
         self._toolbar = AppToolBar(self._handle_toolbar_action, self)
@@ -140,6 +186,7 @@ class MainWindow(QMainWindow):
 
         session = self._pdf_service.load_document(file_path)
         self._load_session(session)
+        self._remember_opened_file(file_path)
         self.statusBar().showMessage(
             f"Loaded {session.page_count} pages from {session.source_path.name}",
             5000,
@@ -161,6 +208,7 @@ class MainWindow(QMainWindow):
 
         if self._session is None:
             self._load_session(self._pdf_service.load_document(file_path))
+            self._remember_opened_file(file_path)
             self.statusBar().showMessage(
                 (
                     f"Loaded {self._session.page_count if self._session else 0} pages "
@@ -173,10 +221,79 @@ class MainWindow(QMainWindow):
         before = self._session.clone()
         page_count = self._pdf_service.get_page_count(file_path)
         self._session.append_document(file_path, page_count)
+        self._remember_opened_file(file_path)
         self._record_history_change(before, "Add PDF")
         self._refresh_thumbnails(preserve_selection=True)
         self.statusBar().showMessage(
             f"Added {page_count} pages from {Path(file_path).name}",
+            5000,
+        )
+
+    def _remember_opened_file(self, file_path: str | Path) -> None:
+        self._settings_service.add_recent_file(file_path)
+        self._settings_service.set_last_session_path(file_path)
+        self._refresh_recent_files_menu()
+
+    def _refresh_recent_files_menu(self) -> None:
+        recent_paths = self._settings_service.recent_files()
+        for index, action in enumerate(self._recent_file_actions):
+            if index < len(recent_paths):
+                recent_path = recent_paths[index]
+                action.setText(f"{index + 1}. {Path(recent_path).name}")
+                action.setToolTip(recent_path)
+                action.setData(recent_path)
+                action.setVisible(True)
+                continue
+
+            action.setVisible(False)
+            action.setData(None)
+
+    def _open_recent_file(self, file_path: str) -> None:
+        if not file_path:
+            return
+        if not Path(file_path).exists():
+            self._settings_service.remove_recent_file(file_path)
+            self._refresh_recent_files_menu()
+            self.statusBar().showMessage("Recent file no longer exists.", 3000)
+            return
+        if not self._confirm_discard_unsaved_changes():
+            return
+
+        try:
+            session = self._pdf_service.load_document(file_path)
+        except (OSError, ValueError) as error:
+            self._settings_service.remove_recent_file(file_path)
+            self._refresh_recent_files_menu()
+            self.statusBar().showMessage(f"Unable to open recent file: {error}", 5000)
+            return
+
+        self._load_session(session)
+        self._remember_opened_file(file_path)
+        self.statusBar().showMessage(
+            f"Restored {session.page_count} pages from {session.source_path.name}",
+            5000,
+        )
+
+    def _attempt_restore_last_session(self) -> None:
+        if self._session is not None:
+            return
+        if not self._settings_service.should_restore_last_session():
+            return
+
+        file_path = self._settings_service.last_session_path()
+        if file_path is None:
+            return
+
+        try:
+            session = self._pdf_service.load_document(file_path)
+        except (OSError, ValueError):
+            self._settings_service.clear_last_session_path()
+            return
+
+        self._load_session(session)
+        self._remember_opened_file(file_path)
+        self.statusBar().showMessage(
+            f"Restored last session: {session.source_path.name}",
             5000,
         )
 
@@ -237,7 +354,9 @@ class MainWindow(QMainWindow):
         self._refresh_thumbnails(preserve_selection=True)
 
         if selected_index is None:
-            self._viewer_panel.show_placeholder("Open a PDF to view its pages.")
+            self._viewer_panel.show_placeholder(
+                "No pages left. Open a PDF or add another file to continue."
+            )
             self._inspector_panel.set_blank_state()
         else:
             self._thumbnail_panel.set_current_page(selected_index)
@@ -491,7 +610,7 @@ class MainWindow(QMainWindow):
             self._thumbnail_panel.set_current_page(session.selected_page_index)
             self._select_page(session.selected_page_index)
         else:
-            self._viewer_panel.show_placeholder("Open a PDF to view its pages.")
+            self._viewer_panel.show_placeholder(self.STARTUP_HINT)
             self._inspector_panel.set_blank_state()
         self._refresh_history_ui()
         self.statusBar().showMessage(
@@ -531,6 +650,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._confirm_discard_unsaved_changes():
+            if self._session is None:
+                self._settings_service.clear_last_session_path()
             event.accept()
             return
         event.ignore()

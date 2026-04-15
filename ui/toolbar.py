@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QToolBar
 
@@ -21,22 +21,26 @@ class AppToolBar(QToolBar):
 
     def _build_actions(self, on_action: Callable[[str], None]) -> None:
         action_specs = [
-            ("open", "Open PDF"),
-            ("add", "Add PDF"),
-            ("save_as", "Save As"),
-            ("split", "Split"),
-            ("save_splits", "Save Splits"),
-            ("cancel_split", "Cancel Split"),
-            ("join", "Join"),
-            ("rotate", "Rotate"),
-            ("duplicate", "Duplicate"),
-            ("delete", "Delete"),
-            ("undo", "Undo"),
-            ("redo", "Redo"),
+            ("open", "Open PDF", QKeySequence.StandardKey.Open),
+            ("add", "Add PDF", "Ctrl+Shift+O"),
+            ("save_as", "Save As", QKeySequence.StandardKey.SaveAs),
+            ("split", "Split", "Ctrl+Shift+L"),
+            ("save_splits", "Save Splits", "Ctrl+Shift+E"),
+            ("cancel_split", "Cancel Split", "Esc"),
+            ("join", "Join", "Ctrl+J"),
+            ("rotate", "Rotate", "Ctrl+R"),
+            ("duplicate", "Duplicate", QKeySequence.StandardKey.Copy),
+            ("delete", "Delete", QKeySequence.StandardKey.Delete),
+            ("undo", "Undo", QKeySequence.StandardKey.Undo),
+            ("redo", "Redo", QKeySequence.StandardKey.Redo),
         ]
 
-        for index, (action_id, label) in enumerate(action_specs):
+        for index, (action_id, label, shortcut) in enumerate(action_specs):
             action = QAction(label, self)
+            action.setShortcut(shortcut)
+            action.setShortcutContext(Qt.ShortcutContext.WindowShortcut)
+            action.setStatusTip(label)
+            action.setToolTip(f"{label} ({action.shortcut().toString()})")
             action.triggered.connect(lambda _checked=False, value=action_id: on_action(value))
             self._actions[action_id] = action
             self.addAction(action)

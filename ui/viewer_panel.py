@@ -19,7 +19,9 @@ class ViewerPanel(QFrame):
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._page_label.setObjectName("PageCanvas")
         self._page_label.setMinimumHeight(280)
-        self._page_label.setText("Open a PDF to view its pages.")
+        self._page_label.setText(
+            "Open a PDF to start. Then add PDFs, reorder pages, and build split plans here."
+        )
 
         self._scroll_area = QScrollArea(self)
         self._scroll_area.setWidgetResizable(True)
