@@ -36,6 +36,13 @@ class DocumentSession:
             return None
         return self.pages[self.selected_page_index]
 
+    def clone(self) -> "DocumentSession":
+        return DocumentSession(
+            source_path=self.source_path,
+            pages=list(self.pages),
+            selected_page_index=self.selected_page_index,
+        )
+
     def select_page(self, index: int) -> None:
         if not 0 <= index < self.page_count:
             raise IndexError(f"Page index out of range: {index}")

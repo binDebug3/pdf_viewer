@@ -6,12 +6,14 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
 
 from core.models.document_session import DocumentSession
 from core.models.split_spec import SplitSpec
+from core.state.history import HistoryStep, SessionHistory
 from services.export_service import ExportService
 from services.pdf_service import PdfService
 
@@ -28,6 +30,7 @@ class MainWindow(QMainWindow):
         self._export_service = ExportService(self._pdf_service)
         self._session: DocumentSession | None = None
         self._selected_page_indexes: list[int] = []
+        self._history = SessionHistory()
         self._split_mode_active = False
         self._split_spec = SplitSpec(mode="current")
         self.setWindowTitle("PDF Viewer")
@@ -40,6 +43,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         self._toolbar = AppToolBar(self._handle_toolbar_action, self)
         self.addToolBar(self._toolbar)
+        self._toolbar.set_history_state(can_undo=False, can_redo=False)
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -107,17 +111,24 @@ class MainWindow(QMainWindow):
         if action_id == "cancel_split":
             self._exit_split_mode(clear_markers=True)
             return
+        if action_id == "undo":
+            self._undo()
+            return
+        if action_id == "redo":
+            self._redo()
+            return
 
         messages = {
             "save_as": "Save As will be wired in Phase 6.",
             "join": "Join now happens by adding PDFs into the current filmstrip.",
             "rotate": "Rotate will be added after page operations are wired.",
-            "undo": "Undo history will be added in Phase 5.",
-            "redo": "Redo history will be added in Phase 5.",
         }
         self.statusBar().showMessage(messages.get(action_id, "Action not implemented yet."), 4000)
 
     def _open_pdf(self) -> None:
+        if not self._confirm_discard_unsaved_changes():
+            return
+
         file_path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Open PDF",
@@ -144,6 +155,10 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
+        if self._session is not None and self._history.is_dirty:
+            if not self._confirm_discard_unsaved_changes():
+                return
+
         if self._session is None:
             self._load_session(self._pdf_service.load_document(file_path))
             self.statusBar().showMessage(
@@ -155,8 +170,10 @@ class MainWindow(QMainWindow):
             )
             return
 
+        before = self._session.clone()
         page_count = self._pdf_service.get_page_count(file_path)
         self._session.append_document(file_path, page_count)
+        self._record_history_change(before, "Add PDF")
         self._refresh_thumbnails(preserve_selection=True)
         self.statusBar().showMessage(
             f"Added {page_count} pages from {Path(file_path).name}",
@@ -166,8 +183,10 @@ class MainWindow(QMainWindow):
     def _load_session(self, session: DocumentSession) -> None:
         self._exit_split_mode(clear_markers=True)
         self._session = session
+        self._history.reset(session)
         self._refresh_thumbnails(preserve_selection=False)
         self._select_page(0)
+        self._refresh_history_ui()
 
     def _refresh_thumbnails(self, preserve_selection: bool) -> None:
         if self._session is None:
@@ -193,7 +212,9 @@ class MainWindow(QMainWindow):
         if self._session is None:
             return
 
+        before = self._session.clone()
         selected_index = self._session.move_page(source_index, destination_index)
+        self._record_history_change(before, "Reorder pages")
         self._selected_page_indexes = [selected_index]
         self._refresh_thumbnails(preserve_selection=True)
         self._thumbnail_panel.set_current_page(selected_index)
@@ -208,7 +229,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Select at least one page to delete.", 3000)
             return
 
+        before = self._session.clone()
         selected_index = self._session.delete_pages(self._selected_page_indexes)
+        self._record_history_change(before, "Delete pages")
         deleted_count = len(self._selected_page_indexes)
         self._selected_page_indexes = [] if selected_index is None else [selected_index]
         self._refresh_thumbnails(preserve_selection=True)
@@ -227,10 +250,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Select at least one page to duplicate.", 3000)
             return
 
+        before = self._session.clone()
         inserted_indexes = self._session.duplicate_pages(self._selected_page_indexes)
         if not inserted_indexes:
             return
 
+        self._record_history_change(before, "Duplicate pages")
         self._selected_page_indexes = inserted_indexes
         self._refresh_thumbnails(preserve_selection=True)
         self._thumbnail_panel.set_current_page(inserted_indexes[0])
@@ -428,3 +453,84 @@ class MainWindow(QMainWindow):
         self._apply_split_markers()
         self._update_inspector()
         self.statusBar().showMessage("Split plan reset.", 2500)
+
+    def _undo(self) -> None:
+        if self._session is None:
+            self.statusBar().showMessage("Open a PDF before using Undo.", 3000)
+            return
+
+        session, step = self._history.undo()
+        if session is None or step is None:
+            self.statusBar().showMessage("Nothing to undo.", 2500)
+            return
+
+        self._apply_history_session(session, step, action="undo")
+
+    def _redo(self) -> None:
+        if self._session is None:
+            self.statusBar().showMessage("Open a PDF before using Redo.", 3000)
+            return
+
+        session, step = self._history.redo()
+        if session is None or step is None:
+            self.statusBar().showMessage("Nothing to redo.", 2500)
+            return
+
+        self._apply_history_session(session, step, action="redo")
+
+    def _apply_history_session(
+        self,
+        session: DocumentSession,
+        step: HistoryStep,
+        action: str,
+    ) -> None:
+        self._session = session
+        self._selected_page_indexes = [session.selected_page_index] if session.pages else []
+        self._refresh_thumbnails(preserve_selection=True)
+        if session.pages:
+            self._thumbnail_panel.set_current_page(session.selected_page_index)
+            self._select_page(session.selected_page_index)
+        else:
+            self._viewer_panel.show_placeholder("Open a PDF to view its pages.")
+            self._inspector_panel.set_blank_state()
+        self._refresh_history_ui()
+        self.statusBar().showMessage(
+            f"{action.title()}: {step.label}",
+            3000,
+        )
+
+    def _record_history_change(self, before: DocumentSession, label: str) -> None:
+        if self._session is None:
+            return
+
+        if before == self._session:
+            return
+
+        self._history.record(self._session, label)
+        self._refresh_history_ui()
+
+    def _refresh_history_ui(self) -> None:
+        self._toolbar.set_history_state(
+            can_undo=self._history.can_undo,
+            can_redo=self._history.can_redo,
+        )
+        self.setWindowTitle("PDF Viewer*" if self._history.is_dirty else "PDF Viewer")
+
+    def _confirm_discard_unsaved_changes(self) -> bool:
+        if not self._history.is_dirty:
+            return True
+
+        choice = QMessageBox.warning(
+            self,
+            "Discard unsaved changes?",
+            "You have unsaved session changes. Continue and discard them?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return choice == QMessageBox.StandardButton.Discard
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if self._confirm_discard_unsaved_changes():
+            event.accept()
+            return
+        event.ignore()

@@ -52,3 +52,7 @@ class AppToolBar(QToolBar):
         self._actions["save_splits"].setEnabled(active)
         self._actions["cancel_split"].setVisible(active)
         self._actions["cancel_split"].setEnabled(active)
+
+    def set_history_state(self, can_undo: bool, can_redo: bool) -> None:
+        self._actions["undo"].setEnabled(can_undo)
+        self._actions["redo"].setEnabled(can_redo)
