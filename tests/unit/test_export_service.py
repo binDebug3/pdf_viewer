@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fitz
+import pytest
 
 from services.export_service import ExportService
 from services.pdf_service import PdfService
@@ -49,6 +50,49 @@ def test_export_service_exports_multiple_groups(tmp_path: Path) -> None:
     assert all(path.exists() for path in exported_paths)
     assert exported_paths[0].name == "session_1.pdf"
     assert exported_paths[1].name == "session_2.pdf"
+
+
+def test_export_service_rejects_existing_target_without_overwrite(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "source.pdf"
+    _create_sample_pdf(source_pdf, 2)
+
+    pdf_service = PdfService()
+    export_service = ExportService(pdf_service)
+    session = pdf_service.load_document(source_pdf)
+    output_path = tmp_path / "result.pdf"
+    _create_sample_pdf(output_path, 1)
+
+    with pytest.raises(FileExistsError):
+        export_service.export_session(session, output_path)
+
+
+def test_export_service_overwrites_existing_target_when_enabled(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "source.pdf"
+    _create_sample_pdf(source_pdf, 3)
+
+    pdf_service = PdfService()
+    export_service = ExportService(pdf_service)
+    session = pdf_service.load_document(source_pdf)
+    output_path = tmp_path / "result.pdf"
+    _create_sample_pdf(output_path, 1)
+
+    export_service.export_session(session, output_path, allow_overwrite=True)
+
+    exported_document = fitz.open(output_path)
+    assert exported_document.page_count == 3
+    exported_document.close()
+
+
+def test_export_service_requires_pdf_extension(tmp_path: Path) -> None:
+    source_pdf = tmp_path / "source.pdf"
+    _create_sample_pdf(source_pdf, 1)
+
+    pdf_service = PdfService()
+    export_service = ExportService(pdf_service)
+    session = pdf_service.load_document(source_pdf)
+
+    with pytest.raises(ValueError, match=".pdf extension"):
+        export_service.export_session(session, tmp_path / "result")
 
 
 def _create_sample_pdf(file_path: Path, page_count: int) -> None:

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QVBoxLayout,
     QWidget,
 )
@@ -16,6 +21,7 @@ from core.models.split_spec import SplitSpec
 from core.state.history import HistoryStep, SessionHistory
 from services.export_service import ExportService
 from services.pdf_service import PdfService
+from services.settings_service import SettingsService
 
 from ui.inspector_panel import InspectorPanel
 from ui.thumbnail_panel import ThumbnailPanel
@@ -28,6 +34,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._pdf_service = PdfService()
         self._export_service = ExportService(self._pdf_service)
+        self._settings_service = SettingsService()
         self._session: DocumentSession | None = None
         self._selected_page_indexes: list[int] = []
         self._history = SessionHistory()
@@ -96,6 +103,9 @@ class MainWindow(QMainWindow):
         if action_id == "add":
             self._add_pdf()
             return
+        if action_id == "save_as":
+            self._save_as()
+            return
         if action_id == "delete":
             self._delete_selected_pages()
             return
@@ -119,7 +129,6 @@ class MainWindow(QMainWindow):
             return
 
         messages = {
-            "save_as": "Save As will be wired in Phase 6.",
             "join": "Join now happens by adding PDFs into the current filmstrip.",
             "rotate": "Rotate will be added after page operations are wired.",
         }
@@ -323,16 +332,95 @@ class MainWindow(QMainWindow):
         if not output_path:
             return
 
-        exported_paths = self._export_service.export_groups(
-            self._session,
-            groups,
-            base_output_path=output_path,
-        )
+        destination = self._normalize_pdf_output_path(output_path)
+        allow_overwrite = self._settings_service.overwrite_existing
+
+        def export_split_groups() -> list[Path]:
+            return self._export_service.export_groups(
+                self._session,
+                groups,
+                base_output_path=destination,
+                allow_overwrite=allow_overwrite,
+            )
+
+        try:
+            exported_paths = self._run_export_task(
+                "Exporting split documents...",
+                export_split_groups,
+            )
+        except FileExistsError as error:
+            if not self._confirm_overwrite(str(error)):
+                self.statusBar().showMessage("Split export canceled.", 3000)
+                return
+
+            exported_paths = self._run_export_task(
+                "Exporting split documents...",
+                lambda: self._export_service.export_groups(
+                    self._session,
+                    groups,
+                    base_output_path=destination,
+                    allow_overwrite=True,
+                ),
+            )
+        except (OSError, ValueError) as error:
+            self._show_export_error("Split export failed", str(error))
+            return
+
+        self._settings_service.set_last_export_directory(destination.parent)
         self._exit_split_mode(clear_markers=True)
         self.statusBar().showMessage(
             f"Created {len(exported_paths)} split PDF(s) starting at {exported_paths[0].name}",
             5000,
         )
+
+    def _save_as(self) -> None:
+        if self._session is None or not self._session.pages:
+            self.statusBar().showMessage("Open a PDF before using Save As.", 3000)
+            return
+
+        default_path = self._default_export_path()
+        output_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save As",
+            str(default_path),
+            "PDF Files (*.pdf)",
+        )
+        if not output_path:
+            return
+
+        destination = self._normalize_pdf_output_path(output_path)
+        allow_overwrite = self._settings_service.overwrite_existing
+
+        try:
+            exported_path = self._run_export_task(
+                "Exporting PDF...",
+                lambda: self._export_service.export_session(
+                    self._session,
+                    destination,
+                    allow_overwrite=allow_overwrite,
+                ),
+            )
+        except FileExistsError as error:
+            if not self._confirm_overwrite(str(error)):
+                self.statusBar().showMessage("Save As canceled.", 3000)
+                return
+
+            exported_path = self._run_export_task(
+                "Exporting PDF...",
+                lambda: self._export_service.export_session(
+                    self._session,
+                    destination,
+                    allow_overwrite=True,
+                ),
+            )
+        except (OSError, ValueError) as error:
+            self._show_export_error("Save As failed", str(error))
+            return
+
+        self._settings_service.set_last_export_directory(exported_path.parent)
+        self._history.mark_clean()
+        self._refresh_history_ui()
+        self.statusBar().showMessage(f"Saved session as {exported_path.name}", 5000)
 
     def _exit_split_mode(self, clear_markers: bool) -> None:
         self._split_mode_active = False
@@ -528,6 +616,61 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Cancel,
         )
         return choice == QMessageBox.StandardButton.Discard
+
+    def _default_export_path(self) -> Path:
+        if self._session is None:
+            return Path.cwd() / "document.pdf"
+
+        base_name = f"{self._session.source_path.stem}_edited.pdf"
+        export_directory = self._settings_service.last_export_directory
+        if export_directory is None:
+            export_directory = self._session.source_path.parent
+        return export_directory / base_name
+
+    @staticmethod
+    def _normalize_pdf_output_path(raw_output_path: str) -> Path:
+        path = Path(raw_output_path)
+        if path.suffix == "":
+            return path.with_suffix(".pdf")
+        return path
+
+    def _run_export_task(self, label: str, callback: Callable[[], Path | list[Path]]):
+        progress = QProgressDialog(label, "", 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
+        try:
+            return callback()
+        finally:
+            progress.close()
+
+    def _confirm_overwrite(self, detail: str) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Overwrite existing file?")
+        dialog.setText("One or more export files already exist.")
+        dialog.setInformativeText(detail)
+
+        remember_choice = QCheckBox(
+            "Always overwrite existing exports without prompting",
+            dialog,
+        )
+        dialog.setCheckBox(remember_choice)
+        overwrite_button = dialog.addButton("Overwrite", QMessageBox.ButtonRole.AcceptRole)
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+
+        should_overwrite = dialog.clickedButton() == overwrite_button
+        if should_overwrite and remember_choice.isChecked():
+            self._settings_service.set_overwrite_existing(True)
+        return should_overwrite
+
+    def _show_export_error(self, title: str, message: str) -> None:
+        QMessageBox.critical(self, title, message)
+        self.statusBar().showMessage(f"{title}: {message}", 5000)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._confirm_discard_unsaved_changes():
