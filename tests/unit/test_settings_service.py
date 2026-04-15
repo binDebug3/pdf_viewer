@@ -47,3 +47,35 @@ def test_settings_service_handles_last_session_path_and_restore_flag(tmp_path: P
 
     assert service.last_session_path() == str(document.resolve())
     assert service.should_restore_last_session() is False
+
+
+def test_settings_service_tracks_export_preferences(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    service = SettingsService(settings=settings)
+
+    export_directory = tmp_path / "exports"
+    export_directory.mkdir()
+    service.set_last_export_directory(export_directory)
+    service.set_overwrite_existing(True)
+
+    assert service.last_export_directory == export_directory
+    assert service.overwrite_existing is True
+
+
+def test_settings_service_clears_missing_last_session_and_removes_recent(tmp_path: Path) -> None:
+    settings = _build_settings(tmp_path)
+    service = SettingsService(settings=settings)
+
+    missing_file = tmp_path / "missing.pdf"
+    settings.setValue(SettingsService.KEY_LAST_SESSION_PATH, str(missing_file.resolve()))
+
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    service.add_recent_file(first)
+    service.add_recent_file(second)
+    service.remove_recent_file(first)
+
+    assert service.last_session_path() is None
+    assert service.recent_files() == [str(second.resolve())]

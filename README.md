@@ -50,3 +50,20 @@ Generate a coverage report with:
 pytest --cov=core --cov=services --cov-report=term-missing
 ```
 
+## Package (Windows Beta)
+
+Use PyInstaller to create a distributable Windows build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1
+```
+
+Optional one-file build:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -OneFile
+```
+
+See `docs/phase9-beta-readiness.md` for the clean-machine verification checklist,
+distribution guidance, and runtime crash-reporting details.
+
