@@ -57,6 +57,9 @@ class PdfService:
                     from_page=page.source_page_index,
                     to_page=page.source_page_index,
                 )
+                if page.rotation % 360 != 0:
+                    inserted_page = export_document.load_page(export_document.page_count - 1)
+                    inserted_page.set_rotation(page.rotation % 360)
             export_document.save(destination)
         finally:
             export_document.close()
