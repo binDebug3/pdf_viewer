@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
         self._session: DocumentSession | None = None
         self._selected_page_indexes: list[int] = []
         self._split_mode_active = False
-        self._split_start_indexes: set[int] = set()
+        self._split_spec = SplitSpec(mode="current")
         self.setWindowTitle("PDF Viewer")
         self.resize(1080, 700)
         self.setMinimumSize(860, 560)
@@ -63,6 +63,8 @@ class MainWindow(QMainWindow):
 
         self._viewer_panel = ViewerPanel(self)
         self._inspector_panel = InspectorPanel(self)
+        self._inspector_panel.split_options_changed.connect(self._update_split_plan)
+        self._inspector_panel.split_reset_requested.connect(self._reset_split_plan)
 
         layout.addWidget(self._viewer_panel, stretch=1)
         layout.addWidget(self._inspector_panel)
@@ -251,12 +253,17 @@ class MainWindow(QMainWindow):
             return
 
         self._split_mode_active = True
-        self._split_start_indexes.clear()
+        self._split_spec = SplitSpec(mode="selected")
         self._toolbar.set_split_mode(True)
+        self._inspector_panel.set_split_controls(
+            self._split_spec.mode,
+            self._split_spec.custom_ranges,
+            self._split_spec.create_multiple_files,
+        )
         self._apply_split_markers()
         self._update_inspector()
         self.statusBar().showMessage(
-            "Split mode active. Click filmstrip pages to mark new document starts.",
+            "Split mode active. Choose a split source and review the live preview.",
             5000,
         )
 
@@ -264,8 +271,20 @@ class MainWindow(QMainWindow):
         if self._session is None or not self._session.pages:
             return
 
-        spec = SplitSpec(tuple(sorted(self._split_start_indexes)))
-        groups = spec.build_groups(self._session.page_count)
+        error = self._split_spec.validation_error(
+            page_count=self._session.page_count,
+            current_page_index=self._session.selected_page_index,
+            selected_indexes=self._selected_page_indexes,
+        )
+        if error is not None:
+            self.statusBar().showMessage(error, 3000)
+            return
+
+        groups = self._split_spec.build_output_groups(
+            page_count=self._session.page_count,
+            current_page_index=self._session.selected_page_index,
+            selected_indexes=self._selected_page_indexes,
+        )
         if not groups:
             self.statusBar().showMessage("No split groups are available to export.", 3000)
             return
@@ -293,41 +312,29 @@ class MainWindow(QMainWindow):
     def _exit_split_mode(self, clear_markers: bool) -> None:
         self._split_mode_active = False
         if clear_markers:
-            self._split_start_indexes.clear()
+            self._split_spec = SplitSpec(mode="current")
         if hasattr(self, "_toolbar"):
             self._toolbar.set_split_mode(False)
         self._apply_split_markers()
         self._update_inspector()
 
     def _handle_page_clicked(self, page_index: int) -> None:
-        if not self._split_mode_active:
-            return
-        if page_index == 0:
-            self.statusBar().showMessage(
-                "Page 1 already starts the first split document.",
-                3000,
-            )
-            return
-
-        if page_index in self._split_start_indexes:
-            self._split_start_indexes.remove(page_index)
-            self.statusBar().showMessage(
-                f"Removed split start on page {page_index + 1}",
-                3000,
-            )
-        else:
-            self._split_start_indexes.add(page_index)
-            self.statusBar().showMessage(
-                f"Added split start on page {page_index + 1}",
-                3000,
-            )
-        self._apply_split_markers()
-        self._update_inspector()
+        return
 
     def _apply_split_markers(self) -> None:
         if not hasattr(self, "_thumbnail_panel"):
             return
-        split_starts = {0, *self._split_start_indexes} if self._split_mode_active else set()
+        split_starts = set()
+        if self._split_mode_active and self._session is not None:
+            try:
+                groups = self._split_spec.build_output_groups(
+                    page_count=self._session.page_count,
+                    current_page_index=self._session.selected_page_index,
+                    selected_indexes=self._selected_page_indexes,
+                )
+                split_starts = {group[0] for group in groups if group}
+            except ValueError:
+                split_starts = set()
         self._thumbnail_panel.set_split_starts(split_starts)
 
     def _select_page(self, page_index: int) -> None:
@@ -360,9 +367,32 @@ class MainWindow(QMainWindow):
 
         split_preview_lines: list[str] = []
         if self._split_mode_active:
-            split_preview_lines = SplitSpec(
-                tuple(sorted(self._split_start_indexes))
-            ).describe_groups(self._session.page_count)
+            split_preview_lines = self._split_spec.describe_output_groups(
+                page_count=self._session.page_count,
+                current_page_index=self._session.selected_page_index,
+                selected_indexes=self._selected_page_indexes,
+            )
+
+            validation_error = self._split_spec.validation_error(
+                page_count=self._session.page_count,
+                current_page_index=self._session.selected_page_index,
+                selected_indexes=self._selected_page_indexes,
+            )
+            preview_text = (
+                validation_error
+                if validation_error is not None
+                else "\n".join(split_preview_lines) or "No split output yet."
+            )
+            self._inspector_panel.set_split_preview(preview_text)
+            self._inspector_panel.set_split_controls(
+                self._split_spec.mode,
+                self._split_spec.custom_ranges,
+                self._split_spec.create_multiple_files,
+            )
+        else:
+            self._inspector_panel.set_split_preview(
+                "Preview will appear when split mode is active."
+            )
 
         self._inspector_panel.set_document_state(
             str(self._session.source_path),
@@ -371,6 +401,30 @@ class MainWindow(QMainWindow):
             self._session.source_count,
             max(1, len(self._selected_page_indexes)),
             split_mode_active=self._split_mode_active,
-            split_start_indexes=sorted(self._split_start_indexes),
+            split_start_indexes=[],
             split_preview_lines=split_preview_lines,
         )
+
+    def _update_split_plan(
+        self,
+        mode: str,
+        custom_ranges: str,
+        create_multiple_files: bool,
+    ) -> None:
+        if not self._split_mode_active:
+            return
+        self._split_spec = SplitSpec(
+            mode=mode,
+            custom_ranges=custom_ranges,
+            create_multiple_files=create_multiple_files,
+        )
+        self._apply_split_markers()
+        self._update_inspector()
+
+    def _reset_split_plan(self) -> None:
+        if not self._split_mode_active:
+            return
+        self._split_spec = SplitSpec(mode="selected")
+        self._apply_split_markers()
+        self._update_inspector()
+        self.statusBar().showMessage("Split plan reset.", 2500)
