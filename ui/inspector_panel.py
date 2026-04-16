@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 class InspectorPanel(QFrame):
     split_options_changed = Signal(str, str, bool)
     split_reset_requested = Signal()
+    split_apply_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -58,8 +59,8 @@ class InspectorPanel(QFrame):
         self._create_multiple = QCheckBox("Create one PDF per chosen page", self)
 
         action_row = QHBoxLayout()
-        self._reset_split = QPushButton("Reset", self)
-        self._apply_split = QPushButton("Apply", self)
+        self._reset_split = QPushButton("Cancel Split", self)
+        self._apply_split = QPushButton("Save Splits", self)
         action_row.addWidget(self._reset_split)
         action_row.addWidget(self._apply_split)
 
@@ -70,7 +71,7 @@ class InspectorPanel(QFrame):
         self._split_mode.currentIndexChanged.connect(self._emit_split_options)
         self._custom_ranges.textChanged.connect(self._emit_split_options)
         self._create_multiple.stateChanged.connect(self._emit_split_options)
-        self._apply_split.clicked.connect(self._emit_split_options)
+        self._apply_split.clicked.connect(self._emit_split_apply)
         self._reset_split.clicked.connect(self._emit_split_reset)
 
         layout.addWidget(title)
@@ -168,6 +169,10 @@ class InspectorPanel(QFrame):
             self._custom_ranges.text().strip(),
             self._create_multiple.isChecked(),
         )
+
+    def _emit_split_apply(self) -> None:
+        self._emit_split_options()
+        self.split_apply_requested.emit()
 
     def _emit_split_reset(self) -> None:
         self.split_reset_requested.emit()

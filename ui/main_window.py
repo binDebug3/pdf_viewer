@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
@@ -44,6 +46,8 @@ class MainWindow(QMainWindow):
         self._split_mode_active = False
         self._split_spec = SplitSpec(mode="current")
         self._recent_file_actions: list[QAction] = []
+        self._saved_notice: QLabel | None = None
+        self._saved_notice_token = 0
         self.setWindowTitle("PDF Viewer")
         self.resize(1180, 760)
         self.setMinimumSize(860, 560)
@@ -60,7 +64,7 @@ class MainWindow(QMainWindow):
         open_action.setShortcut("Ctrl+O")
         open_action.triggered.connect(lambda: self._handle_toolbar_action("open"))
 
-        add_action = file_menu.addAction("Add PDF...")
+        add_action = file_menu.addAction("Add/Join PDFs...")
         add_action.setShortcut("Ctrl+Shift+O")
         add_action.triggered.connect(lambda: self._handle_toolbar_action("add"))
 
@@ -112,7 +116,10 @@ class MainWindow(QMainWindow):
         self._viewer_panel = ViewerPanel(self)
         self._inspector_panel = InspectorPanel(self)
         self._inspector_panel.split_options_changed.connect(self._update_split_plan)
-        self._inspector_panel.split_reset_requested.connect(self._reset_split_plan)
+        self._inspector_panel.split_apply_requested.connect(self._save_split_documents)
+        self._inspector_panel.split_reset_requested.connect(
+            lambda: self._exit_split_mode(clear_markers=True)
+        )
 
         layout.addWidget(self._viewer_panel, stretch=1)
         layout.addWidget(self._inspector_panel)
@@ -158,12 +165,6 @@ class MainWindow(QMainWindow):
         if action_id == "cancel_split":
             self._exit_split_mode(clear_markers=True)
             return
-        if action_id == "join":
-            self._join_pdfs()
-            return
-        if action_id == "rotate":
-            self._rotate_selected_pages()
-            return
         if action_id == "undo":
             self._undo()
             return
@@ -195,13 +196,13 @@ class MainWindow(QMainWindow):
         )
 
     def _add_pdf(self) -> None:
-        file_path, _selected_filter = QFileDialog.getOpenFileName(
+        file_paths, _selected_filter = QFileDialog.getOpenFileNames(
             self,
-            "Add PDF",
+            "Add or Join PDFs",
             "",
             "PDF Files (*.pdf)",
         )
-        if not file_path:
+        if not file_paths:
             return
 
         if self._session is not None and self._history.is_dirty:
@@ -209,46 +210,13 @@ class MainWindow(QMainWindow):
                 return
 
         if self._session is None:
-            self._load_session(self._pdf_service.load_document(file_path))
-            self._remember_opened_file(file_path)
-            self.statusBar().showMessage(
-                (
-                    f"Loaded {self._session.page_count if self._session else 0} pages "
-                    f"from {Path(file_path).name}"
-                ),
-                5000,
-            )
-            return
-
-        before = self._session.clone()
-        page_count = self._pdf_service.get_page_count(file_path)
-        self._session.append_document(file_path, page_count)
-        self._remember_opened_file(file_path)
-        self._record_history_change(before, "Add PDF")
-        self._refresh_thumbnails(preserve_selection=True)
-        self.statusBar().showMessage(
-            f"Added {page_count} pages from {Path(file_path).name}",
-            5000,
-        )
-
-    def _join_pdfs(self) -> None:
-        file_paths, _selected_filter = QFileDialog.getOpenFileNames(
-            self,
-            "Join PDFs",
-            "",
-            "PDF Files (*.pdf)",
-        )
-        if not file_paths:
-            return
-
-        if self._session is None:
             primary_path = file_paths[0]
             session = self._pdf_service.load_document(primary_path)
             self._load_session(session)
             self._remember_opened_file(primary_path)
-            join_paths = file_paths[1:]
+            add_paths = file_paths[1:]
         else:
-            join_paths = file_paths
+            add_paths = file_paths
 
         if self._session is None:
             return
@@ -257,7 +225,7 @@ class MainWindow(QMainWindow):
         total_added_pages = 0
         first_added_index = self._session.page_count
 
-        for file_path in join_paths:
+        for file_path in add_paths:
             page_count = self._pdf_service.get_page_count(file_path)
             if page_count <= 0:
                 continue
@@ -266,39 +234,22 @@ class MainWindow(QMainWindow):
             total_added_pages += page_count
 
         if total_added_pages == 0:
-            self.statusBar().showMessage("No additional pages were added during join.", 3000)
+            loaded_count = self._session.page_count
+            loaded_name = self._session.source_path.name
+            self.statusBar().showMessage(
+                f"Loaded {loaded_count} pages from {loaded_name}",
+                5000,
+            )
             return
 
-        self._record_history_change(before, "Join PDFs")
+        self._record_history_change(before, "Add PDFs")
         self._selected_page_indexes = [first_added_index]
         self._refresh_thumbnails(preserve_selection=True)
         self._thumbnail_panel.set_current_page(first_added_index)
         self._select_page(first_added_index)
         self.statusBar().showMessage(
-            f"Joined {len(join_paths)} file(s), adding {total_added_pages} page(s).",
+            f"Added {len(add_paths)} file(s), adding {total_added_pages} page(s).",
             5000,
-        )
-
-    def _rotate_selected_pages(self) -> None:
-        if self._session is None or not self._session.pages:
-            self.statusBar().showMessage("Open a PDF before rotating pages.", 3000)
-            return
-
-        target_indexes = self._selected_page_indexes or [self._session.selected_page_index]
-        before = self._session.clone()
-        rotated_indexes = self._session.rotate_pages(target_indexes, degrees=90)
-        if not rotated_indexes:
-            self.statusBar().showMessage("Select at least one page to rotate.", 3000)
-            return
-
-        self._record_history_change(before, "Rotate pages")
-        self._selected_page_indexes = rotated_indexes
-        self._refresh_thumbnails(preserve_selection=True)
-        self._thumbnail_panel.set_current_page(rotated_indexes[0])
-        self._select_page(rotated_indexes[0])
-        self.statusBar().showMessage(
-            f"Rotated {len(rotated_indexes)} page(s) clockwise.",
-            3000,
         )
 
     def _remember_opened_file(self, file_path: str | Path) -> None:
@@ -528,7 +479,7 @@ class MainWindow(QMainWindow):
             )
 
         try:
-            exported_paths = self._run_export_task(
+            self._run_export_task(
                 "Exporting split documents...",
                 export_split_groups,
             )
@@ -537,7 +488,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Split export canceled.", 3000)
                 return
 
-            exported_paths = self._run_export_task(
+            self._run_export_task(
                 "Exporting split documents...",
                 lambda: self._export_service.export_groups(
                     self._session,
@@ -552,10 +503,7 @@ class MainWindow(QMainWindow):
 
         self._settings_service.set_last_export_directory(destination.parent)
         self._exit_split_mode(clear_markers=True)
-        self.statusBar().showMessage(
-            f"Created {len(exported_paths)} split PDF(s) starting at {exported_paths[0].name}",
-            5000,
-        )
+        self._show_saved_notice()
 
     def _save_as(self) -> None:
         if self._session is None or not self._session.pages:
@@ -576,7 +524,7 @@ class MainWindow(QMainWindow):
         allow_overwrite = self._settings_service.overwrite_existing
 
         try:
-            exported_path = self._run_export_task(
+            self._run_export_task(
                 "Exporting PDF...",
                 lambda: self._export_service.export_session(
                     self._session,
@@ -589,7 +537,7 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Save As canceled.", 3000)
                 return
 
-            exported_path = self._run_export_task(
+            self._run_export_task(
                 "Exporting PDF...",
                 lambda: self._export_service.export_session(
                     self._session,
@@ -601,10 +549,10 @@ class MainWindow(QMainWindow):
             self._show_export_error("Save As failed", str(error))
             return
 
-        self._settings_service.set_last_export_directory(exported_path.parent)
+        self._settings_service.set_last_export_directory(destination.parent)
         self._history.mark_clean()
         self._refresh_history_ui()
-        self.statusBar().showMessage(f"Saved session as {exported_path.name}", 5000)
+        self._show_saved_notice()
 
     def _exit_split_mode(self, clear_markers: bool) -> None:
         self._split_mode_active = False
@@ -620,20 +568,23 @@ class MainWindow(QMainWindow):
             return
 
         if self._split_mode_active:
-            toggled_indexes = set(self._selected_page_indexes)
-            if page_index in toggled_indexes:
-                toggled_indexes.remove(page_index)
+            split_start_indexes = set(self._split_spec.start_indexes)
+            if page_index in split_start_indexes:
+                split_start_indexes.remove(page_index)
             else:
-                toggled_indexes.add(page_index)
+                split_start_indexes.add(page_index)
 
-            self._selected_page_indexes = sorted(toggled_indexes)
-            self._thumbnail_panel.set_selected_pages(self._selected_page_indexes)
+            self._split_spec = replace(
+                self._split_spec,
+                start_indexes=tuple(sorted(split_start_indexes)),
+            )
+            self._thumbnail_panel.set_selected_pages(sorted(split_start_indexes))
             self._thumbnail_panel.set_current_page(page_index)
             self._select_page(page_index)
             self._apply_split_markers()
             self._update_inspector()
             self.statusBar().showMessage(
-                f"Split selection: {len(self._selected_page_indexes)} page(s)",
+                f"Split first pages: {len(split_start_indexes)} selected",
                 2000,
             )
             return
@@ -675,6 +626,9 @@ class MainWindow(QMainWindow):
         self._update_inspector()
 
     def _handle_selection_changed(self, indexes: list[int]) -> None:
+        if self._split_mode_active:
+            return
+
         self._selected_page_indexes = indexes
         if not indexes:
             self._update_inspector()
@@ -737,6 +691,7 @@ class MainWindow(QMainWindow):
         if not self._split_mode_active:
             return
         self._split_spec = SplitSpec(
+            start_indexes=self._split_spec.start_indexes,
             mode=mode,
             custom_ranges=custom_ranges,
             create_multiple_files=create_multiple_files,
@@ -748,6 +703,7 @@ class MainWindow(QMainWindow):
         if not self._split_mode_active:
             return
         self._split_spec = SplitSpec(mode="selected")
+        self._thumbnail_panel.set_selected_pages([])
         self._apply_split_markers()
         self._update_inspector()
         self.statusBar().showMessage("Split plan reset.", 2500)
@@ -848,7 +804,7 @@ class MainWindow(QMainWindow):
         progress = QProgressDialog(label, "", 0, 0, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setCancelButton(None)
-        progress.setMinimumDuration(0)
+        progress.setMinimumDuration(450)
         progress.show()
         QApplication.processEvents()
         try:
@@ -881,6 +837,50 @@ class MainWindow(QMainWindow):
     def _show_export_error(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
         self.statusBar().showMessage(f"{title}: {message}", 5000)
+
+    def _show_saved_notice(self) -> None:
+        if self._saved_notice is None:
+            self._saved_notice = QLabel("", self)
+            self._saved_notice.setObjectName("SavedNotice")
+            self._saved_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._saved_notice.setStyleSheet(
+                "background: rgba(28, 34, 42, 0.94);"
+                "color: #f8fafc;"
+                "border: 1px solid #4de4b9;"
+                "border-radius: 10px;"
+                "padding: 8px 14px;"
+                "font-weight: 600;"
+            )
+
+        self._saved_notice_token += 1
+        token = self._saved_notice_token
+        self._saved_notice.setText("Saved!")
+        self._saved_notice.adjustSize()
+        self._position_saved_notice()
+        self._saved_notice.show()
+        self._saved_notice.raise_()
+        QTimer.singleShot(3000, lambda: self._clear_saved_notice(token))
+
+    def _clear_saved_notice(self, token: int) -> None:
+        if token != self._saved_notice_token:
+            return
+        if self._saved_notice is not None:
+            self._saved_notice.hide()
+
+    def _position_saved_notice(self) -> None:
+        if self._saved_notice is None:
+            return
+
+        x_pos = (self.width() - self._saved_notice.width()) // 2
+        y_pos = max(
+            8,
+            self.height() - self.statusBar().height() - self._saved_notice.height() - 14,
+        )
+        self._saved_notice.move(x_pos, y_pos)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._position_saved_notice()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         if self._confirm_discard_unsaved_changes():

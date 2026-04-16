@@ -103,13 +103,13 @@ class FilmstripListWidget(QListWidget):
                 height = self.viewport().height()
                 divider_left = x_pos - 7
                 divider_height = max(0, height - 8)
-                painter.fillRect(divider_left, 4, 14, divider_height, QColor("#f4f7fb"))
+                painter.fillRect(divider_left, 4, 14, divider_height, QColor("#fff4cc"))
                 painter.fillRect(
                     divider_left + 1,
                     5,
                     12,
                     max(0, divider_height - 2),
-                    QColor("#12273f"),
+                    QColor("#ff9f1c"),
                 )
 
         marker_color = QColor("#51c7c2")

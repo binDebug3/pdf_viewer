@@ -74,32 +74,13 @@ def test_split_mode_click_toggles_selected_page(qtbot, monkeypatch) -> None:
     window._enter_split_mode()
 
     window._handle_page_clicked(1)
-    assert window._selected_page_indexes == [1]
+    assert window._split_spec.start_indexes == (1,)
 
     window._handle_page_clicked(1)
-    assert window._selected_page_indexes == []
+    assert window._split_spec.start_indexes == ()
 
 
-def test_rotate_action_rotates_selected_pages(qtbot, monkeypatch) -> None:
-    window = MainWindow()
-    qtbot.addWidget(window)
-    monkeypatch.setattr(window, "_confirm_discard_unsaved_changes", lambda: True)
-
-    session = DocumentSession.from_page_count("example.pdf", 3)
-    window._session = session
-    window._pdf_service.render_thumbnail = lambda *_args, **_kwargs: QPixmap(60, 80)
-    window._pdf_service.render_page = lambda *_args, **_kwargs: QPixmap(640, 800)
-    window._refresh_thumbnails(preserve_selection=False)
-    window._selected_page_indexes = [0, 2]
-
-    window._handle_toolbar_action("rotate")
-
-    assert window._session.pages[0].rotation == 90
-    assert window._session.pages[1].rotation == 0
-    assert window._session.pages[2].rotation == 90
-
-
-def test_join_action_appends_multiple_documents(qtbot, monkeypatch, tmp_path: Path) -> None:
+def test_add_action_appends_multiple_documents(qtbot, monkeypatch, tmp_path: Path) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
     monkeypatch.setattr(window, "_confirm_discard_unsaved_changes", lambda: True)
@@ -120,7 +101,7 @@ def test_join_action_appends_multiple_documents(qtbot, monkeypatch, tmp_path: Pa
         ),
     )
 
-    window._handle_toolbar_action("join")
+    window._handle_toolbar_action("add")
 
     assert window._session is not None
     assert window._session.page_count == 5

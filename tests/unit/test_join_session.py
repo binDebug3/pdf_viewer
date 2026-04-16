@@ -50,15 +50,3 @@ def test_document_session_can_duplicate_selected_pages() -> None:
     assert session.selected_page_index == 1
     assert session.pages[1].source_page_index == 0
     assert session.pages[4].source_page_index == 2
-
-
-def test_document_session_rotates_selected_pages_clockwise() -> None:
-    session = DocumentSession.from_page_count("first.pdf", 3)
-
-    rotated_indexes = session.rotate_pages([0, 2], degrees=90)
-
-    assert rotated_indexes == [0, 2]
-    assert session.pages[0].rotation == 90
-    assert session.pages[1].rotation == 0
-    assert session.pages[2].rotation == 90
-    assert session.selected_page_index == 0

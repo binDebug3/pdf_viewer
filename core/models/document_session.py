@@ -116,22 +116,3 @@ class DocumentSession:
 
         self.selected_page_index = inserted_indexes[0]
         return inserted_indexes
-
-    def rotate_pages(self, indexes: list[int], degrees: int = 90) -> list[int]:
-        unique_indexes = sorted(set(indexes))
-        if not unique_indexes:
-            return []
-
-        for index in unique_indexes:
-            if not 0 <= index < self.page_count:
-                raise IndexError(f"Page index out of range: {index}")
-
-            page = self.pages[index]
-            self.pages[index] = PageItem(
-                source_path=page.source_path,
-                source_page_index=page.source_page_index,
-                rotation=(page.rotation + degrees) % 360,
-            )
-
-        self.selected_page_index = unique_indexes[0]
-        return unique_indexes

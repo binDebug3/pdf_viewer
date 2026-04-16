@@ -22,17 +22,15 @@ class AppToolBar(QToolBar):
     def _build_actions(self, on_action: Callable[[str], None]) -> None:
         action_specs = [
             ("open", "Open PDF", QKeySequence.StandardKey.Open),
-            ("add", "Add PDF", "Ctrl+Shift+O"),
+            ("add", "Add/Join PDFs", "Ctrl+Shift+O"),
             ("save_as", "Save As", QKeySequence.StandardKey.SaveAs),
+            ("undo", "Undo", QKeySequence.StandardKey.Undo),
+            ("redo", "Redo", QKeySequence.StandardKey.Redo),
             ("split", "Split", "Ctrl+Shift+L"),
             ("save_splits", "Save Splits", "Ctrl+Shift+E"),
             ("cancel_split", "Cancel Split", "Esc"),
-            ("join", "Join", "Ctrl+J"),
-            ("rotate", "Rotate", "Ctrl+R"),
             ("duplicate", "Duplicate", QKeySequence.StandardKey.Copy),
             ("delete", "Delete", QKeySequence.StandardKey.Delete),
-            ("undo", "Undo", QKeySequence.StandardKey.Undo),
-            ("redo", "Redo", QKeySequence.StandardKey.Redo),
         ]
 
         for index, (action_id, label, shortcut) in enumerate(action_specs):
@@ -48,16 +46,16 @@ class AppToolBar(QToolBar):
             self.addAction(action)
             if action_id in {"save_splits", "cancel_split"}:
                 action.setVisible(False)
-            if index in {2, 6, 9}:
+            if action_id in {"save_as", "redo", "cancel_split", "delete"}:
                 self.addSeparator()
 
     def set_split_mode(self, active: bool) -> None:
         self._actions["split"].setText("Split Active" if active else "Split")
         self._actions["split"].setChecked(active)
         self._actions["split"].setEnabled(True)
-        self._actions["save_splits"].setVisible(active)
+        self._actions["save_splits"].setVisible(False)
         self._actions["save_splits"].setEnabled(active)
-        self._actions["cancel_split"].setVisible(active)
+        self._actions["cancel_split"].setVisible(False)
         self._actions["cancel_split"].setEnabled(active)
 
     def set_history_state(self, can_undo: bool, can_redo: bool) -> None:
