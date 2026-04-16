@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLineEdit
 
@@ -12,6 +13,7 @@ from tests.fixtures.pdf_factory import create_multi_page_pdf
 from ui.inspector_panel import InspectorPanel
 from ui.main_window import MainWindow
 from ui.thumbnail_panel import ThumbnailPanel
+from ui.viewer_panel import ViewerPanel
 
 
 def test_thumbnail_panel_selection_sync(qtbot) -> None:
@@ -60,6 +62,28 @@ def test_inspector_emits_split_options_on_apply(qtbot) -> None:
     assert signal.args[0] == "custom"
 
 
+def test_inspector_panel_collapse_toggle_changes_width_and_chevron(qtbot) -> None:
+    """Inspector panel should collapse to a thin strip and expand back."""
+    panel = InspectorPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.width() == panel.EXPANDED_WIDTH
+    assert panel._toggle_button._point_left is False
+
+    qtbot.mouseClick(panel._toggle_button, Qt.MouseButton.LeftButton)
+
+    assert panel.width() == panel.COLLAPSED_WIDTH
+    assert panel.property("collapsed") is True
+    assert panel._toggle_button._point_left is True
+
+    qtbot.mouseClick(panel._toggle_button, Qt.MouseButton.LeftButton)
+
+    assert panel.width() == panel.EXPANDED_WIDTH
+    assert panel.property("collapsed") is False
+    assert panel._toggle_button._point_left is False
+    assert panel._toggle_button.toolTip() == "Collapse details panel"
+
+
 def test_split_mode_click_toggles_selected_page(qtbot, monkeypatch) -> None:
     window = MainWindow()
     qtbot.addWidget(window)
@@ -106,3 +130,14 @@ def test_add_action_appends_multiple_documents(qtbot, monkeypatch, tmp_path: Pat
     assert window._session is not None
     assert window._session.page_count == 5
     assert window._session.source_count == 2
+
+
+def test_viewer_requests_higher_resolution_for_small_source(qtbot) -> None:
+    panel = ViewerPanel()
+    qtbot.addWidget(panel)
+    panel.resize(900, 700)
+
+    with qtbot.waitSignal(panel.higher_resolution_render_requested, timeout=1000) as signal:
+        panel.show_page(QPixmap(640, 800), page_index=0, page_count=1)
+
+    assert signal.args[0] >= panel.render_target_width()

@@ -10,6 +10,9 @@ from core.models.page_item import PageItem
 
 
 class PdfService:
+    MIN_RENDER_SCALE = 0.2
+    MAX_RENDER_SCALE = 8.0
+
     def __init__(self) -> None:
         self._documents: dict[str, fitz.Document] = {}
 
@@ -73,7 +76,8 @@ class PdfService:
 
     @staticmethod
     def _scale_for_max_width(page_width: float, max_width: int) -> float:
-        return max(min(max_width / max(page_width, 1), 2.0), 0.2)
+        raw_scale = max_width / max(page_width, 1)
+        return max(min(raw_scale, PdfService.MAX_RENDER_SCALE), PdfService.MIN_RENDER_SCALE)
 
     @staticmethod
     def _to_qpixmap(pixmap: fitz.Pixmap) -> QPixmap:

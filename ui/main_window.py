@@ -48,6 +48,11 @@ class MainWindow(QMainWindow):
         self._recent_file_actions: list[QAction] = []
         self._saved_notice: QLabel | None = None
         self._saved_notice_token = 0
+        self._pending_render_width = 0
+        self._rerender_timer = QTimer(self)
+        self._rerender_timer.setSingleShot(True)
+        self._rerender_timer.setInterval(90)
+        self._rerender_timer.timeout.connect(self._rerender_current_page)
         self.setWindowTitle("PDF Viewer")
         self.resize(1180, 760)
         self.setMinimumSize(860, 560)
@@ -114,6 +119,9 @@ class MainWindow(QMainWindow):
         layout.setSpacing(4)
 
         self._viewer_panel = ViewerPanel(self)
+        self._viewer_panel.higher_resolution_render_requested.connect(
+            self._request_higher_resolution_page
+        )
         self._inspector_panel = InspectorPanel(self)
         self._inspector_panel.split_options_changed.connect(self._update_split_plan)
         self._inspector_panel.split_apply_requested.connect(self._save_split_documents)
@@ -624,6 +632,29 @@ class MainWindow(QMainWindow):
         self._viewer_panel.show_page(pixmap, page_index, self._session.page_count)
         self._thumbnail_panel.set_current_page(page_index)
         self._update_inspector()
+
+    def _request_higher_resolution_page(self, target_width: int) -> None:
+        if self._session is None or not self._session.pages:
+            return
+
+        current_width = self._viewer_panel.current_source_width()
+        if current_width * 1.1 >= target_width:
+            return
+
+        self._pending_render_width = max(self._pending_render_width, target_width)
+        self._rerender_timer.start()
+
+    def _rerender_current_page(self) -> None:
+        if self._session is None or not self._session.pages:
+            self._pending_render_width = 0
+            return
+
+        if self._pending_render_width <= 0:
+            return
+
+        selected_index = self._session.selected_page_index
+        self._pending_render_width = 0
+        self._select_page(selected_index)
 
     def _handle_selection_changed(self, indexes: list[int]) -> None:
         if self._split_mode_active:

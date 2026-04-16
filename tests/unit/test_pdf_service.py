@@ -48,6 +48,19 @@ def test_pdf_service_preserves_page_rotation_on_export(tmp_path: Path) -> None:
         service.close_all()
 
 
+def test_render_page_respects_large_target_width(tmp_path: Path) -> None:
+    create_application()
+    file_path = tmp_path / "sample.pdf"
+    _create_sample_pdf(file_path)
+
+    service = PdfService()
+    rendered_page = service.render_page(file_path, 0, max_width=3200)
+
+    assert rendered_page.width() >= 3000
+
+    service.close_all()
+
+
 def _create_sample_pdf(file_path: Path) -> None:
     document = fitz.open()
     for index in range(2):

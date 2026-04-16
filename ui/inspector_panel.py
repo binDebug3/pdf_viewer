@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QPoint, Signal, Qt
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -11,11 +12,59 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
+    QToolButton,
     QVBoxLayout,
 )
 
 
+class ChevronToggleButton(QToolButton):
+    """Tool button that paints a chevron directly for reliable visibility."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._point_left = False
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+
+    def set_point_left(self, point_left: bool) -> None:
+        self._point_left = point_left
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor("#dfe6ef"))
+        pen.setWidthF(2.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        center_x = self.rect().center().x()
+        center_y = self.rect().center().y()
+        half_width = 4
+        half_height = 5
+
+        path = QPainterPath()
+        if self._point_left:
+            path.moveTo(QPoint(center_x + half_width, center_y - half_height))
+            path.lineTo(QPoint(center_x - half_width, center_y))
+            path.lineTo(QPoint(center_x + half_width, center_y + half_height))
+        else:
+            path.moveTo(QPoint(center_x - half_width, center_y - half_height))
+            path.lineTo(QPoint(center_x + half_width, center_y))
+            path.lineTo(QPoint(center_x - half_width, center_y + half_height))
+
+        painter.drawPath(path)
+        painter.end()
+
+
 class InspectorPanel(QFrame):
+    EXPANDED_WIDTH = 280
+    COLLAPSED_WIDTH = 36
+
     split_options_changed = Signal(str, str, bool)
     split_reset_requested = Signal()
     split_apply_requested = Signal()
@@ -23,14 +72,31 @@ class InspectorPanel(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("SidebarPlaceholder")
-        self.setFixedWidth(280)
+        self.setFixedWidth(self.EXPANDED_WIDTH)
+        self._is_collapsed = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
+        self._layout = layout
 
         title = QLabel("Details", self)
         title.setObjectName("SectionTitle")
+
+        self._toggle_button = ChevronToggleButton(self)
+        self._toggle_button.setObjectName("InspectorCollapseButton")
+        self._toggle_button.setFixedSize(24, 24)
+        self._set_toggle_icon()
+        self._toggle_button.setAutoRaise(True)
+        self._toggle_button.setToolTip("Collapse details panel")
+        self._toggle_button.clicked.connect(self._toggle_collapsed)
+
+        self._header_row = QHBoxLayout()
+        self._header_row.setContentsMargins(0, 0, 0, 0)
+        self._header_row.setSpacing(4)
+        self._header_row.addWidget(title)
+        self._header_row.addStretch(1)
+        self._header_row.addWidget(self._toggle_button)
 
         self._summary = QLabel("Current state: blank workspace", self)
         self._summary.setObjectName("MutedText")
@@ -74,7 +140,7 @@ class InspectorPanel(QFrame):
         self._apply_split.clicked.connect(self._emit_split_apply)
         self._reset_split.clicked.connect(self._emit_split_reset)
 
-        layout.addWidget(title)
+        layout.addLayout(self._header_row)
         layout.addWidget(self._summary)
         layout.addWidget(self._details)
         layout.addWidget(split_title)
@@ -84,6 +150,19 @@ class InspectorPanel(QFrame):
         layout.addLayout(action_row)
         layout.addWidget(self._split_preview)
         layout.addStretch(1)
+
+        self._collapsible_widgets = [
+            title,
+            self._summary,
+            self._details,
+            split_title,
+            self._split_mode,
+            self._custom_ranges,
+            self._create_multiple,
+            self._reset_split,
+            self._apply_split,
+            self._split_preview,
+        ]
 
         self._set_split_controls_enabled(False)
 
@@ -188,3 +267,47 @@ class InspectorPanel(QFrame):
     def _update_custom_visibility(self) -> None:
         is_custom = self._split_mode.currentData() == "custom"
         self._custom_ranges.setVisible(is_custom)
+
+    def _toggle_collapsed(self) -> None:
+        self._is_collapsed = not self._is_collapsed
+        self._apply_collapsed_state()
+
+    def _set_toggle_icon(self) -> None:
+        self._toggle_button.set_point_left(self._is_collapsed)
+
+    def _apply_collapsed_state(self) -> None:
+        self._toggle_button.setToolTip(
+            "Expand details panel" if self._is_collapsed else "Collapse details panel"
+        )
+
+        for widget in self._collapsible_widgets:
+            widget.setVisible(not self._is_collapsed)
+
+        self.setProperty("collapsed", self._is_collapsed)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        if self._is_collapsed:
+            self._header_row.setContentsMargins(0, 0, 0, 0)
+            self._layout.setContentsMargins(0, 0, 0, 0)
+            self._layout.setSpacing(0)
+            self._toggle_button.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
+            self._toggle_button.setFixedWidth(self.COLLAPSED_WIDTH)
+            self._toggle_button.setMinimumHeight(80)
+            self.setFixedWidth(self.COLLAPSED_WIDTH)
+            self._set_toggle_icon()
+            return
+
+        self._header_row.setContentsMargins(0, 0, 0, 0)
+        self._layout.setContentsMargins(10, 10, 10, 10)
+        self._layout.setSpacing(8)
+        self._toggle_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._toggle_button.setFixedSize(24, 24)
+        self.setFixedWidth(self.EXPANDED_WIDTH)
+        self._set_toggle_icon()

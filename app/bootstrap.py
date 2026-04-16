@@ -139,6 +139,31 @@ def _build_stylesheet() -> str:
         border-radius: 12px;
     }
 
+    QFrame#SidebarPlaceholder[collapsed="true"] {
+        background: transparent;
+        border: none;
+    }
+
+    QToolButton#InspectorCollapseButton {
+        background: transparent;
+        border: none;
+        color: #c6cfdb;
+        min-width: 24px;
+        min-height: 24px;
+    }
+
+    QFrame#SidebarPlaceholder[collapsed="true"] QToolButton#InspectorCollapseButton {
+        background: #242d39;
+        border: 1px solid #33404f;
+        border-radius: 8px;
+    }
+
+    QToolButton#InspectorCollapseButton:hover {
+        background: #2b3847;
+        border: 1px solid #46576a;
+        border-radius: 8px;
+    }
+
     QFrame#ViewerPanelContainer,
     QFrame#FilmstripPanel {
         background: transparent;
